@@ -1,0 +1,13 @@
+google-generativeai==0.3.2
+pyttsx3==2.90
+gTTS==2.4.0
+Pillow==10.1.0
+opencv-python==4.8.1.78
+moviepy==1.0.3
+requests==2.31.0
+schedule==1.2.0
+numpy==1.24.3
+google-api-python-client==2.108.0
+google-auth-httplib2==0.1.1
+google-auth-oauthlib==1.1.0
+cloudinary==1.36.0
