@@ -11,9 +11,11 @@ from generate_vdo import VideoGenerator
 from tiktok_control import TikTokController
 from reels_control import ReelsController
 from youtube_control import YouTubeController
+from telegram_notifier import TelegramNotifier
 from setting import (
     CONTENT_CREATION_TIMES, create_directories, get_enabled_platforms,
-    get_platform_settings, is_safe_mode, get_current_mode_settings
+    get_platform_settings, is_safe_mode, get_current_mode_settings,
+    TELEGRAM_SETTINGS
 )
 
 class MultiPlatformGhostStoryBot:
@@ -59,6 +61,12 @@ class MultiPlatformGhostStoryBot:
         if is_safe_mode():
             print("🔒 โหมดปลอดภัย: จะสร้างไฟล์เท่านั้น ไม่โพสต์อัตโนมัติ")
     
+        # เพิ่ม Telegram Notifier
+        if TELEGRAM_SETTINGS.get('enabled', False):
+            self.telegram_notifier = TelegramNotifier()
+        else:
+            self.telegram_notifier = None
+    
     def create_and_post_story(self):
         """สร้างและโพสต์เรื่องผีไปยังแพลตฟอร์มที่เปิดใช้งาน"""
         try:
@@ -96,8 +104,17 @@ class MultiPlatformGhostStoryBot:
             print("🎬 กำลังสร้างวิดีโอ...")
             video_file = self.video_gen.generate_complete_video(story_data, audio_file)
             
+            video_success = bool(video_file)
+            
             if not video_file:
                 print("❌ ไม่สามารถสร้างวิดีโอได้")
+                # ส่งการแจ้งเตือนล้มเหลว
+                if self.telegram_notifier and TELEGRAM_SETTINGS.get('notify_on_failure', True):
+                    self.telegram_notifier.send_post_status(
+                        story_data['title'], 
+                        False, 
+                        {platform: False for platform in self.controllers.keys()}
+                    )
                 return False
             
             print(f"✅ สร้างวิดีโอสำเร็จ: {video_file}")
@@ -133,6 +150,21 @@ class MultiPlatformGhostStoryBot:
             # สรุปผลการอัปโหลด
             successful_uploads = [platform for platform, success in upload_results.items() if success]
             
+            # ส่งการแจ้งเตือนไป Telegram
+            if self.telegram_notifier:
+                if successful_uploads and TELEGRAM_SETTINGS.get('notify_on_success', True):
+                    self.telegram_notifier.send_post_status(
+                        story_data['title'], 
+                        video_success, 
+                        upload_results
+                    )
+                elif not successful_uploads and TELEGRAM_SETTINGS.get('notify_on_failure', True):
+                    self.telegram_notifier.send_post_status(
+                        story_data['title'], 
+                        video_success, 
+                        upload_results
+                    )
+            
             if successful_uploads:
                 if is_safe_mode():
                     print(f"🎉 สร้าง draft สำเร็จสำหรับ: {', '.join(successful_uploads)}")
@@ -148,99 +180,113 @@ class MultiPlatformGhostStoryBot:
             
         except Exception as e:
             print(f"❌ เกิดข้อผิดพลาด: {e}")
+            # ส่งการแจ้งเตือนข้อผิดพลาด
+            if self.telegram_notifier and TELEGRAM_SETTINGS.get('notify_on_failure', True):
+                error_results = {platform: False for platform in self.controllers.keys()}
+                self.telegram_notifier.send_post_status("เกิดข้อผิดพลาด", False, error_results)
             return False
     
     def setup_schedule(self):
-        """ตั้งเวลาการทำงานตามการตั้งค่า"""
-        print("⏰ ตั้งเวลาการทำงาน...")
+        """ตั้งค่าตารางเวลาการทำงานอัตโนมัติ"""
+        print("⏰ กำลังตั้งค่าตารางเวลา...")
         
         for creation_time in CONTENT_CREATION_TIMES:
-            time_str = creation_time.strftime("%H:%M")
-            schedule.every().day.at(time_str).do(self.create_and_post_story)
-            print(f"   - {time_str}")
+            schedule.every().day.at(creation_time.strftime("%H:%M")).do(self.create_and_post_story)
+            print(f"📅 ตั้งเวลาสร้างคอนเทนต์: {creation_time.strftime('%H:%M')}")
         
-        print("✅ ตั้งเวลาเรียบร้อย")
+        print("✅ ตั้งค่าตารางเวลาเสร็จสิ้น")
     
     def run_once(self):
-        """รันครั้งเดียวสำหรับทดสอบ"""
-        print("🧪 รันทดสอบครั้งเดียว...")
+        """รันสร้างคอนเทนต์ครั้งเดียว"""
+        print("🚀 เริ่มสร้างคอนเทนต์ทันที...")
         return self.create_and_post_story()
     
     def test_platform_connections(self):
         """ทดสอบการเชื่อมต่อกับแพลตฟอร์มต่างๆ"""
-        print("🔍 ทดสอบการเชื่อมต่อแพลตฟอร์ม...")
+        print("🔍 ทดสอบการเชื่อมต่อกับแพลตฟอร์มต่างๆ...")
         
+        # ทดสอบ Gemini
+        print("\n🤖 ทดสอบ Gemini AI...")
+        if self.gemini.test_connection():
+            print("✅ Gemini AI พร้อมใช้งาน")
+        else:
+            print("❌ ไม่สามารถเชื่อมต่อ Gemini AI ได้")
+        
+        # ทดสอบแต่ละแพลตฟอร์ม
         for platform, controller in self.controllers.items():
-            try:
-                if hasattr(controller, 'test_connection'):
-                    if controller.test_connection():
-                        print(f"✅ {platform.title()}: เชื่อมต่อสำเร็จ")
-                    else:
-                        print(f"❌ {platform.title()}: ไม่สามารถเชื่อมต่อได้")
-                else:
-                    print(f"⚠️ {platform.title()}: ไม่มีฟังก์ชันทดสอบการเชื่อมต่อ")
-            except Exception as e:
-                print(f"❌ {platform.title()}: เกิดข้อผิดพลาด - {e}")
+            print(f"\n📱 ทดสอบ {platform.title()}...")
+            if hasattr(controller, 'test_connection') and controller.test_connection():
+                print(f"✅ {platform.title()} พร้อมใช้งาน")
+            else:
+                print(f"❌ ไม่สามารถเชื่อมต่อ {platform.title()} ได้")
+        
+        # ทดสอบ Telegram
+        if self.telegram_notifier:
+            print("\n🔔 ทดสอบการเชื่อมต่อ Telegram...")
+            if self.telegram_notifier.test_connection():
+                print("✅ Telegram Bot พร้อมใช้งาน")
+            else:
+                print("❌ ไม่สามารถเชื่อมต่อ Telegram Bot ได้")
     
     def run_forever(self):
-        """รันระบบตลอดเวลา"""
+        """รันระบบแบบอัตโนมัติตามตารางเวลา"""
         self.setup_schedule()
         
-        print("🚀 เริ่มรันระบบ...")
-        print("กด Ctrl+C เพื่อหยุดการทำงาน")
+        print("🔄 เริ่มรันระบบอัตโนมัติ...")
+        print("กด Ctrl+C เพื่อหยุดระบบ")
         
         try:
             while True:
                 schedule.run_pending()
-                time.sleep(60)  # ตรวจสอบทุกนาที
-                
+                time.sleep(60)  # ตรวจสอบทุก 1 นาที
         except KeyboardInterrupt:
-            print("\n👋 หยุดการทำงานแล้ว")
+            print("\n👋 หยุดระบบแล้ว")
     
     def show_status(self):
-        """แสดงสถานะของระบบ"""
-        print("\n📊 สถานะระบบ:")
-        print("=" * 60)
+        """แสดงสถานะปัจจุบันของระบบ"""
+        print("\n" + "="*50)
+        print("📊 สถานะระบบ Pozidonz Ghost Story Bot")
+        print("="*50)
         
-        # แสดงโหมดการทำงาน
-        mode_settings = get_current_mode_settings()
-        print(f"🔒 โหมดการทำงาน: {mode_settings['description']}")
+        # ข้อมูลทั่วไป
+        current_mode = get_current_mode_settings()
+        print(f"🔧 โหมดการทำงาน: {current_mode['name']}")
+        print(f"📝 คำอธิบาย: {current_mode['description']}")
         
-        # แสดงแพลตฟอร์มที่เปิดใช้งาน
-        print(f"🎯 แพลตฟอร์มที่เปิดใช้งาน: {', '.join(self.controllers.keys())}")
+        # แพลตฟอร์มที่เปิดใช้งาน
+        print(f"📱 แพลตฟอร์มที่เปิดใช้งาน: {len(self.controllers)} แพลตฟอร์ม")
+        for platform in self.controllers.keys():
+            print(f"   ✅ {platform.title()}")
         
-        # ทดสอบการเชื่อมต่อ
-        print("\n🔍 สถานะการเชื่อมต่อ:")
-        self.test_platform_connections()
+        # ตารางเวลา
+        print(f"⏰ เวลาสร้างคอนเทนต์: {len(CONTENT_CREATION_TIMES)} ช่วงเวลา")
+        for creation_time in CONTENT_CREATION_TIMES:
+            print(f"   🕐 {creation_time.strftime('%H:%M')}")
         
-        # แสดงเวลาที่จะทำงานถัดไป
-        next_runs = schedule.jobs
-        if next_runs:
-            print(f"\n⏰ การทำงานถัดไป: {len(next_runs)} งาน")
-            for job in next_runs[:3]:  # แสดง 3 งานแรก
-                print(f"   - {job.next_run}")
+        # สถานะ Telegram
+        if self.telegram_notifier:
+            print("🔔 การแจ้งเตือน Telegram: เปิดใช้งาน")
+        else:
+            print("🔔 การแจ้งเตือน Telegram: ปิดใช้งาน")
         
-        print("=" * 60)
+        print("="*50)
 
 def main():
-    """ฟังก์ชันหลัก"""
-    print("👻 ระบบสร้างคอนเทนต์เรื่องผีอัตโนมัติ (หลายแพลตฟอร์ม)")
-    print("🎯 รองรับ: TikTok, Instagram Reels, YouTube Shorts")
-    print("=" * 70)
-    
-    # สร้างบอท
+    """ฟังก์ชันหลักสำหรับรันโปรแกรม"""
     bot = MultiPlatformGhostStoryBot()
     
-    # แสดงเมนู
     while True:
-        print("\n📋 เมนู:")
-        print("1. รันทดสอบครั้งเดียว")
-        print("2. รันระบบตลอดเวลา (ตามเวลาที่กำหนด)")
+        print("\n" + "="*50)
+        print("🎃 Pozidonz - ระบบสร้างคอนเทนต์เรื่องผีอัตโนมัติ")
+        print("="*50)
+        print("1. สร้างและโพสต์เรื่องผีทันที")
+        print("2. รันระบบอัตโนมัติตามตารางเวลา")
         print("3. แสดงสถานะระบบ")
         print("4. ทดสอบการเชื่อมต่อแพลตฟอร์ม")
         print("5. ออกจากโปรแกรม")
+        print("="*50)
         
-        choice = input("\nเลือกตัวเลือก (1-5): ").strip()
+        choice = input("เลือกตัวเลือก (1-5): ").strip()
         
         if choice == "1":
             bot.run_once()
